@@ -7,7 +7,7 @@ import { useUserShops } from "@/hooks/useUserShops";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
-// Khai báo fallback Supabase Keys hợp lệ để tránh crash UI khi Build Electron .exe
+// Khai báo fallback Supabase Keys trực tiếp để tránh lỗi bị mất .env khi Build Electron .exe
 const SUPABASE_URL_SHOPEE = process.env.NEXT_PUBLIC_SUPABASE_URL_SHOPEE || "https://placeholder.supabase.co";
 const SUPABASE_ANON_SHOPEE = process.env.SUPABASE_SERVICE_ROLE_KEY_SHOPEE || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY_SHOPEE || "placeholder-key";
 
@@ -68,6 +68,7 @@ interface ShopItem {
 export default function OrdersProcessing() {
   const { allowedShopIds, loadingShops } = useUserShops();
 
+  // 🎯 REF DÙNG ĐỂ TỰ ĐỘNG CUỘN BẢNG DƯỚI CÙNG
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
   const [availableShops, setAvailableShops] = useState<ShopItem[]>([]);
@@ -118,6 +119,7 @@ export default function OrdersProcessing() {
     semicolon: true,
   });
 
+  // 🎯 QUẢN LÝ SELECTED GROUPS THEO TỪNG SHOP_ID ĐỂ TRÁNH BỊ MẤT TICK KHI CHUYỂN GIAN HÀNG
   const [selectedGroupsMap, setSelectedGroupsMap] = useState<Record<string, string[]>>({});
 
   const selectedGroups = useMemo(() => {
@@ -179,13 +181,12 @@ export default function OrdersProcessing() {
         const folderPath = await ipcRenderer.invoke("select-folder");
 
         if (folderPath) {
-          console.log("📁 Thư mục lưu đã được chọn:", folderPath);
           setDownloadDirPaths((prev) => ({ ...prev, [selectedShopId]: folderPath }));
           localStorage.setItem(`ecom_download_dir_path_${selectedShopId}`, folderPath);
         }
       }
     } catch (err: any) {
-      console.error("❌ Lỗi chọn thư mục:", err);
+      console.error("Lỗi chọn thư mục:", err);
     } finally {
       setIsSelectingFolder(false);
     }
@@ -195,7 +196,7 @@ export default function OrdersProcessing() {
     let isMounted = true;
 
     async function fetchShops() {
-      if (SUPABASE_URL_SHOPEE.includes("placeholder") && SUPABASE_URL_TIKTOK.includes("placeholder")) {
+      if (!SUPABASE_URL_SHOPEE && !SUPABASE_URL_TIKTOK) {
         console.error("⚠️ LỖI: Thiếu SUPABASE URL trong file .env.local!");
         if (isMounted) setIsFetchShopsLoading(false);
         return;
@@ -205,7 +206,7 @@ export default function OrdersProcessing() {
         let shopeeShops: ShopItem[] = [];
         let tiktokShops: ShopItem[] = [];
 
-        if (!SUPABASE_URL_SHOPEE.includes("placeholder")) {
+        if (SUPABASE_URL_SHOPEE) {
           let queryShopee = supabaseShopee
             .from("shops")
             .select("shop_id, shop_name, platforms(platform_name)");
@@ -225,7 +226,7 @@ export default function OrdersProcessing() {
           }
         }
 
-        if (!SUPABASE_URL_TIKTOK.includes("placeholder")) {
+        if (SUPABASE_URL_TIKTOK) {
           let queryTiktok = supabaseTiktok
             .from("shops")
             .select("shop_id, shop_name, platforms!inner(platform_name)");
@@ -373,6 +374,7 @@ export default function OrdersProcessing() {
 
   const { confirmLabel, printLabel } = getSelectedButtonsLabel();
 
+  // 🔥 HÀM CHIA NHÓM THÔNG MINH + AUTO SELECT + AUTO SCROLL DOWN
   const handleMakeGroups = () => {
     if (!rawInput.trim()) return showAlert("Nhắc nhở", "Vui lòng dán danh sách đơn hàng!", "warning");
     if (!selectedShopId) return showAlert("Cảnh báo", "Vui lòng chọn gian hàng xử lý!", "warning");
@@ -389,10 +391,12 @@ export default function OrdersProcessing() {
       }
 
       if (parts.length >= 3) {
+        // TRƯỜNG HỢP 3 CỘT: [Ngày-Giờ-P14] [ĐVVC] [Mã Đơn]
         const rawGroup = parts[0];
         const id = parts[parts.length - 1];
         const method = parts.slice(1, parts.length - 1).join(" ");
 
+        // 🎯 BÓC TÁCH LẤY ĐÚNG CHUỖI "P" + "SỐ" (Ví dụ: 04.09-15h3-P14 -> P14)
         const matchP = rawGroup.match(/P\d+/i);
         const pGroup = matchP ? matchP[0].toUpperCase() : rawGroup;
 
@@ -401,6 +405,7 @@ export default function OrdersProcessing() {
           parsedRows.push({ pGroup, method, id });
         }
       } else if (parts.length === 2) {
+        // TRƯỜNG HỢP 2 CỘT: [ĐVVC] [Mã Đơn]
         const method = parts[0];
         const id = parts[1];
 
@@ -496,6 +501,8 @@ export default function OrdersProcessing() {
       const updatedGroups = [...tempCurrentGroups, ...generatedGroups];
 
       updateGroupsData(updatedGroups);
+      
+      // 🎯 TỰ ĐỘNG BỎ CÁC CŨ VÀ TÍCH CHỌN CÁC NHÓM MỚI NHẬP
       setSelectedGroups(incomingNames);
 
       setRawInput("");
@@ -503,6 +510,7 @@ export default function OrdersProcessing() {
       setIsModalOpen(false);
       showAlert("Thành công", `Đã tạo ${generatedGroups.length} nhóm P mới!`, "success");
 
+      // 🚀 TỰ ĐỘNG CUỘN XUỐNG ĐÁY BẢNG
       setTimeout(() => {
         if (tableContainerRef.current) {
           tableContainerRef.current.scrollTo({
@@ -629,17 +637,9 @@ export default function OrdersProcessing() {
     navigator.clipboard.writeText(compiledText).catch((err) => console.error(err));
   };
 
-  // 🚀 BỔ SUNG LOG VÀO HÀM XÁC NHẬN ĐƠN HÀNG
   const executeConfirmOrdersAPI = async () => {
     setLoading(true);
     setCurrentAction("confirm");
-
-    console.log("==================================================");
-    console.log("🚀 BẮT ĐẦU XÁC NHẬN ĐƠN HÀNG QUA API");
-    console.log("🌐 URL API Endpoint:", currentApiEndpoint);
-    console.log("🏬 Gian hàng hiện tại:", currentShop?.name, `(ID: ${selectedShopId})`);
-    console.log("📦 Số nhóm P đã chọn:", selectedGroups.length, selectedGroups);
-    console.log("==================================================");
 
     const initialProgressList: GroupProgress[] = selectedGroups.map((gName) => ({
       groupName: gName,
@@ -672,7 +672,6 @@ export default function OrdersProcessing() {
 
         const groupData = localGroups.find((g) => g.group_name === gName);
         if (!groupData || !groupData.orders?.length) {
-          console.warn(`⚠️ Nhóm ${gName} không có đơn hàng để xử lý`);
           setProgressState((prev) => ({
             ...prev,
             completedCount: i + 1,
@@ -693,8 +692,6 @@ export default function OrdersProcessing() {
           shop_id: targetShopId,
         };
 
-        console.log(`📡 Sending Request cho nhóm [${gName}]:`, requestBody);
-
         try {
           const response = await fetch(currentApiEndpoint, {
             method: "POST",
@@ -702,10 +699,7 @@ export default function OrdersProcessing() {
             body: JSON.stringify(requestBody),
           });
 
-          console.log(`📩 Phản hồi HTTP Status từ Vercel [${gName}]:`, response.status);
-
           const result = await response.json();
-          console.log(`✅ Kết quả xử lý từ Vercel [${gName}]:`, result);
 
           if (response.ok && result?.success) {
             const resSuccessCount = result.success_count ?? 0;
@@ -738,8 +732,7 @@ export default function OrdersProcessing() {
               ),
             }));
           } else {
-            const errorMsg = result?.message || "Lỗi API";
-            console.error(`❌ Nhóm [${gName}] thất bại từ Server:`, errorMsg);
+            const errorMsg = result?.message;
 
             addHistoryItem({
               group_name: gName,
@@ -759,8 +752,6 @@ export default function OrdersProcessing() {
             }));
           }
         } catch (err: any) {
-          console.error(`🔥 LỖI KẾT NỐI MẠNG (Fetch/CORS) ở nhóm [${gName}]:`, err.message || err);
-
           addHistoryItem({
             group_name: gName,
             action_type: "Xác nhận",
@@ -801,16 +792,9 @@ export default function OrdersProcessing() {
     );
   };
 
-  // 🚀 BỔ SUNG LOG VÀO HÀM TẠO VÀ IN NHÃN PDF
   const executePrintBatch = async () => {
     setLoading(true);
     setCurrentAction("print");
-
-    console.log("==================================================");
-    console.log("🖨️ BẮT ĐẦU TẠO VÀ IN FILE PDF HÀNG LOẠT");
-    console.log("🌐 URL API Endpoint:", currentApiEndpoint);
-    console.log("📁 Thư mục lưu PDF:", currentShopDownloadDirPath);
-    console.log("==================================================");
 
     const initialProgressList: GroupProgress[] = selectedGroups.map((gName) => ({
       groupName: gName,
@@ -847,7 +831,6 @@ export default function OrdersProcessing() {
         const targetShopId = groupData?.orders[0]?.shop_id || selectedShopId;
 
         if (orderIds.length === 0) {
-          console.warn(`⚠️ Nhóm ${gName} không chứa mã đơn hàng nào.`);
           setProgressState((prev) => ({
             ...prev,
             completedCount: i + 1,
@@ -858,28 +841,20 @@ export default function OrdersProcessing() {
           continue;
         }
 
-        const requestBody = {
-          action: "print",
-          group_name: gName,
-          selected_groups_data: [{ group_name: gName, order_ids: orderIds }],
-          shop_id: targetShopId,
-        };
-
-        console.log(`📡 Sending Print Request [${gName}]:`, requestBody);
-
         try {
           const response = await fetch(currentApiEndpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(requestBody),
+            body: JSON.stringify({
+              action: "print",
+              group_name: gName,
+              selected_groups_data: [{ group_name: gName, order_ids: orderIds }],
+              shop_id: targetShopId,
+            }),
           });
-
-          console.log(`📩 Phản hồi HTTP Status từ Vercel [${gName}]:`, response.status);
 
           if (response.ok) {
             const result = await response.json();
-            console.log(`✅ Phản hồi PDF Data từ Vercel [${gName}]:`, result);
-
             if (result.success && result.files && result.files.length > 0) {
               const fileItem = result.files[0];
               const succCount = fileItem.success_count || 0;
@@ -914,51 +889,43 @@ export default function OrdersProcessing() {
                 ),
               }));
             } else {
-              const failMsg = result.message || "Không tạo được file PDF";
-              console.error(`❌ Tạo PDF thất bại [${gName}]:`, failMsg);
-
               addHistoryItem({
                 group_name: gName,
                 action_type: "In nhãn",
                 total_count: orderIds.length,
                 success_count: 0,
                 failed_count: orderIds.length,
-                failed_details: orderIds.map((id: string) => ({ order_id: id, reason: failMsg })),
+                failed_details: orderIds.map((id: string) => ({ order_id: id, reason: result.message || "Không tạo được file" })),
               });
 
               setProgressState((prev) => ({
                 ...prev,
                 completedCount: i + 1,
                 groupsProgress: prev.groupsProgress.map((gp) =>
-                  gp.groupName === gName ? { ...gp, status: "error", message: failMsg } : gp
+                  gp.groupName === gName ? { ...gp, status: "error", message: result.message || "Không tạo được file" } : gp
                 ),
               }));
             }
           } else {
-            const errRes = await response.json().catch(() => null);
-            const errText = errRes?.message || `Lỗi HTTP ${response.status}`;
-            console.error(`❌ Lỗi Response từ Vercel Server [${gName}]:`, response.status, errRes);
-
+            const errRes = await response.json();
             addHistoryItem({
               group_name: gName,
               action_type: "In nhãn",
               total_count: orderIds.length,
               success_count: 0,
               failed_count: orderIds.length,
-              failed_details: orderIds.map((id: string) => ({ order_id: id, reason: errText })),
+              failed_details: orderIds.map((id: string) => ({ order_id: id, reason: errRes.message || "Lỗi tạo PDF" })),
             });
 
             setProgressState((prev) => ({
               ...prev,
               completedCount: i + 1,
               groupsProgress: prev.groupsProgress.map((gp) =>
-                gp.groupName === gName ? { ...gp, status: "error", message: errText } : gp
+                gp.groupName === gName ? { ...gp, status: "error", message: errRes.message || "Lỗi PDF" } : gp
               ),
             }));
           }
-        } catch (err: any) {
-          console.error(`🔥 LỖI KẾT NỐI MẠNG (Fetch/CORS) khi tạo PDF [${gName}]:`, err.message || err);
-
+        } catch (err) {
           addHistoryItem({
             group_name: gName,
             action_type: "In nhãn",
@@ -987,7 +954,6 @@ export default function OrdersProcessing() {
       const totalOrdersInBatch = validFiles.reduce((sum: number, item: any) => sum + (item.success_count || 0), 0);
 
       if (validFiles.length > 0) {
-        console.log(`💾 Bắt đầu lưu ${validFiles.length} file PDF xuống đĩa cứng...`);
         if (typeof window !== "undefined" && (window as any).require) {
           const { ipcRenderer } = (window as any).require("electron");
 
@@ -997,17 +963,13 @@ export default function OrdersProcessing() {
           for (const fileItem of validFiles) {
             const individualFileName = `${shopNamePrefix} - ${dateStr} - ${fileItem.group_name} - ${fileItem.success_count} đơn.pdf`;
 
-            console.log(`💾 Đang ghi file PDF: ${individualFileName}`);
-            const saveRes = await ipcRenderer.invoke("save-pdf-file", {
+            await ipcRenderer.invoke("save-pdf-file", {
               folderPath: targetSubFolderPath,
               fileName: individualFileName,
               base64Data: fileItem.pdf_base64,
             });
-            console.log(`💾 Kết quả ghi file [${individualFileName}]:`, saveRes);
           }
         }
-      } else {
-        console.warn("⚠️ Không có dữ liệu file PDF hợp lệ nào để lưu.");
       }
 
       setProgressState((prev) => ({
@@ -1079,6 +1041,7 @@ export default function OrdersProcessing() {
         {/* 1. THANH CẤU HÌNH GIAN HÀNG & BỘ LỌC TÌM KIẾM */}
         <div className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col lg:flex-row justify-between items-center gap-4 flex-shrink-0">
           <div className="flex items-center gap-4 w-full lg:w-auto">
+            {/* DROPDOWN CHỌN GIAN HÀNG */}
             <div className="flex flex-col gap-1 text-left min-w-[220px] max-w-xs relative">
               <span className="text-slate-400 font-bold text-[10px] uppercase tracking-wider flex items-center gap-1">
                 <Store size={12} /> Gian hàng (Shop)
@@ -1129,6 +1092,7 @@ export default function OrdersProcessing() {
               )}
             </div>
 
+            {/* KIỂU COPY */}
             <div className="flex flex-col gap-1">
               <span className="text-slate-400 font-bold text-[10px] uppercase tracking-wider">
                 Kiểu Copy
@@ -1157,6 +1121,7 @@ export default function OrdersProcessing() {
             </div>
           </div>
 
+          {/* Ô TÌM KIẾM */}
           <div className="flex-1 w-full max-w-md relative">
             <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-400 pointer-events-none">
               <Search size={14} />
@@ -1254,7 +1219,7 @@ export default function OrdersProcessing() {
           </div>
         </div>
 
-        {/* 4. BẢNG LÀM VIỆC CHÍNH */}
+        {/* 4. BẢNG LÀM VIỆC CHÍNH (GÁN REF ĐỂ AUTO SCROLL) */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 flex-1 flex flex-col overflow-hidden">
           <div ref={tableContainerRef} className="border border-slate-100 rounded-xl flex-1 overflow-auto shadow-inner mb-3">
             <table className="w-full text-left border-collapse text-xs">
@@ -1586,6 +1551,7 @@ export default function OrdersProcessing() {
                 </button>
               </div>
 
+              {/* Ô NHẬP SỐ P BẮT ĐẦU THÔNG MINH */}
               {(() => {
                 const is3Cols = rawInput.trim().split("\n")[0]?.split(/[\t]+|\s{2,}/).length >= 3;
                 return (

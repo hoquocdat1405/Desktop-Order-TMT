@@ -46,9 +46,6 @@ async function createWindow() {
     },
   });
 
-  // 🚀 BẬT CỬA SỔ DEVTOOLS NAY LẬP TỨC ĐỂ XEM LOG CẢ TRÊN DEV VÀ BẢN .EXE
-  win.webContents.openDevTools();
-
   if (app.isPackaged) {
     const serverUrl = await startLocalServer();
     win.loadURL(serverUrl);
