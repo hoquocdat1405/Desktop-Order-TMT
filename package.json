@@ -54,6 +54,13 @@
         "portable"
       ],
       "icon": "public/ic.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "QuanLyDonHangDesktop"
     }
   }
 }

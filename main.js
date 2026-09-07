@@ -14,10 +14,10 @@ function startLocalServer() {
       });
     });
 
-    // Cho server lắng nghe cổng ngẫu nhiên (0) khi build .exe để KHÔNG trùng cổng 3005
-    server.listen(0, () => {
-      const port = server.address().port;
-      resolve(`http://localhost:${port}`);
+    // 🚀 CỐ ĐỊNH CỔNG 3095 KHI BUILD .EXE ĐỂ DỮ LIỆU LOCALSTORAGE KHÔNG BỊ XÓA
+    const FIXED_PORT = 3095;
+    server.listen(FIXED_PORT, () => {
+      resolve(`http://localhost:${FIXED_PORT}`);
     });
   });
 }
@@ -45,6 +45,9 @@ async function createWindow() {
       webSecurity: false,
     },
   });
+
+  // 🚀 BẬT CỬA SỔ DEVTOOLS NAY LẬP TỨC ĐỂ XEM LOG CẢ TRÊN DEV VÀ BẢN .EXE
+  win.webContents.openDevTools();
 
   if (app.isPackaged) {
     const serverUrl = await startLocalServer();
