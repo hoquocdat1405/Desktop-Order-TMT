@@ -2,25 +2,58 @@
   "name": "desktop-orders-app",
   "version": "0.1.0",
   "private": true,
+  "main": "main.js",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -H 0.0.0.0 -p 3099",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "electron:dev": "concurrently \"next dev -p 3099\" \"wait-on -t 30000 http://localhost:3099 && electron .\"",
+    "electron:build": "next build && electron-builder"
   },
   "dependencies": {
+    "@pdf-lib/fontkit": "^1.1.1",
+    "@supabase/supabase-js": "^2.112.4",
+    "jszip": "^3.10.1",
+    "lucide-react": "^1.34.0",
     "next": "16.3.3",
+    "pdf-lib": "^1.17.1",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "serve-handler": "^6.1.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "concurrently": "^10.0.5",
+    "electron": "^44.0.0",
+    "electron-builder": "^26.15.3",
     "eslint": "^9",
     "eslint-config-next": "16.3.3",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wait-on": "^9.1.0"
+  },
+  "build": {
+    "appId": "com.orders.desktop",
+    "productName": "QuanLyDonHangDesktop",
+    "asar": true,
+    "files": [
+      "out/**/*",
+      "main.js",
+      "public/**/*",
+      "node_modules/serve-handler/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "public/ic.ico"
+    }
   }
 }
