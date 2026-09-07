@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "electron:dev": "concurrently \"next dev -p 3099\" \"wait-on -t 30000 http://localhost:3099 && electron .\"",
-    "electron:build": "next build && electron-builder"
+    "electron:build": "cmd /c \"set ELECTRON_BUILD=true && next build\" && electron-builder"
   },
   "dependencies": {
     "@pdf-lib/fontkit": "^1.1.1",

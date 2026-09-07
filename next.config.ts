@@ -1,10 +1,10 @@
 import type { NextConfig } from "next";
 
-const isBuild = process.env.NODE_ENV === "production";
+// Chỉ kích hoạt export static khi chạy lệnh build Electron local (npm run electron:build)
+const isElectronBuild = process.env.ELECTRON_BUILD === "true";
 
 const nextConfig: NextConfig = {
-  // Chỉ export static khi Build thật (dùng cho Electron)
-  ...(isBuild && {
+  ...(isElectronBuild && {
     output: "export",
   }),
   basePath: "",
