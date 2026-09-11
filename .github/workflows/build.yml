@@ -17,18 +17,22 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
 
       - name: Install Dependencies
         run: npm install
 
       - name: Build Next.js app
+        env:
+          NEXT_PUBLIC_SUPABASE_URL_SHOPEE: 'https://placeholder.supabase.co'
+          NEXT_PUBLIC_SUPABASE_ANON_KEY_SHOPEE: 'placeholder-key'
         run: npm run build
 
       - name: Build Electron DMG for Mac
         env:
           ELECTRON_BUILD: 'true'
-        run: npx electron-builder --mac dmg --config.mac.identity=null
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder --mac dmg -c.mac.identity=null -c.mac.icon=null
 
       - name: Upload DMG
         uses: actions/upload-artifact@v4
