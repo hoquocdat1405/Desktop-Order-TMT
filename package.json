@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start",
     "electron:dev": "concurrently \"next dev -p 3099\" \"wait-on -t 30000 http://localhost:3099 && electron .\"",
-    "electron:build": "cmd /c \"set ELECTRON_BUILD=true && next build\" && electron-builder"
+    "electron:build:win": "cross-env ELECTRON_BUILD=true next build && electron-builder --win",
+    "electron:build:mac": "cross-env ELECTRON_BUILD=true next build && electron-builder --mac"
   },
   "dependencies": {
     "@pdf-lib/fontkit": "^1.1.1",
@@ -27,6 +28,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "concurrently": "^10.0.5",
+    "cross-env": "^7.0.3",
     "electron": "^44.0.0",
     "electron-builder": "^26.15.3",
     "eslint": "^9",
@@ -54,6 +56,14 @@
         "portable"
       ],
       "icon": "public/ic.ico"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "public/ic.icns",
+      "category": "public.app-category.business"
     },
     "nsis": {
       "oneClick": false,
