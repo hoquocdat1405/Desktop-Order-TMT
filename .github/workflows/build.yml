@@ -34,7 +34,7 @@ jobs:
         env:
           ELECTRON_BUILD: 'true'
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder --mac dmg -c.mac.identity=null -c.mac.icon=null
+        run: npx electron-builder --mac dmg -c.mac.identity=null -c.mac.icon=null --publish never
 
       - name: Upload DMG
         uses: actions/upload-artifact@v4
