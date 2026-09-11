@@ -17,7 +17,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install Dependencies
         run: npm install
@@ -26,6 +26,8 @@ jobs:
         env:
           NEXT_PUBLIC_SUPABASE_URL_SHOPEE: 'https://placeholder.supabase.co'
           NEXT_PUBLIC_SUPABASE_ANON_KEY_SHOPEE: 'placeholder-key'
+          NEXT_PUBLIC_SUPABASE_URL_TIKTOK: 'https://placeholder.supabase.co'
+          NEXT_PUBLIC_SUPABASE_ANON_KEY_TIKTOK: 'placeholder-key'
         run: npm run build
 
       - name: Build Electron DMG for Mac
