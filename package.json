@@ -19,8 +19,7 @@
     "next": "16.3.3",
     "pdf-lib": "^1.17.1",
     "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "serve-handler": "^6.1.7"
+    "react-dom": "19.2.8"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -44,8 +43,7 @@
     "files": [
       "out/**/*",
       "main.js",
-      "public/**/*",
-      "node_modules/serve-handler/**/*"
+      "public/**/*"
     ],
     "directories": {
       "output": "dist"

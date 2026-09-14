@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PDFDocument, rgb } from "pdf-lib";
+import { PDFDocument, rgb, PDFFont } from "pdf-lib";
 import { createClient } from "@supabase/supabase-js";
 import crypto from "crypto";
 import fontkit from "@pdf-lib/fontkit";
 import fs from "fs";
 import path from "path";
 
-// Khởi tạo CORS Headers để Electron kết nối Cross-Origin
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -17,12 +16,10 @@ export async function OPTIONS() {
   return NextResponse.json({}, { headers: corsHeaders });
 }
 
-// Khởi tạo Supabase Client trỏ riêng tới Project Shopee: Order Processing
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL_SHOPEE || "";
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY_SHOPEE || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY_SHOPEE || "";
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Proxy VPS dùng để Refresh Token nhằm vượt rào IP Whitelist
 const HOST = "https://partner.shopeemobile.com";
 const EXPRESS_CHANNEL_IDS = new Set([50026, 50022, 50031, 50020, 50050]);
 
@@ -34,8 +31,8 @@ const CREATE_SHIPPING_DOCUMENT = "/api/v2/logistics/create_shipping_document";
 const DOCUMENT_RESULT = "/api/v2/logistics/get_shipping_document_result";
 const DOWNLOAD_DOCUMENT = "/api/v2/logistics/download_shipping_document";
 
-const CONCURRENCY_LIMIT = 10; // 10 luồng xử lý song song
-const BATCH_SIZE = 5;        // Xử lý 5 đơn/batch
+const CONCURRENCY_LIMIT = 10; 
+const BATCH_SIZE = 5;
 
 let CONFIG = {
   PARTNER_ID: 0,
@@ -116,96 +113,41 @@ function wrapText(text: string, maxWidth: number, font: any, fontSize: number): 
   return lines;
 }
 
-/**
- * LẤY VÀ AUTO-REFRESH CONFIG SHOPEE TỪ DATABASE "Order Processing"
- */
 async function loadConfigFromSupabase(shopId: string): Promise<boolean> {
-  console.log("==================== [DEBUG LOAD CONFIG] ====================");
-  console.log(`[CONFIG] Received shop_id from Client: "${shopId}"`);
-  console.log(`[CONFIG] Supabase URL: "${supabaseUrl}"`);
-
-  if (!shopId) {
-    console.error("[CONFIG ERROR] ❌ Lỗi: shop_id bị trống hoặc undefined.");
-    return false;
-  }
+  if (!shopId) return false;
 
   try {
-    // 1. Đọc Token từ DB Order Processing
-    console.log(`[CONFIG] 🔍 Querying table 'shop_credentials' where shop_id = '${shopId}'...`);
     const { data: cred, error: credError } = await supabase
       .from("shop_credentials")
       .select("*")
       .eq("shop_id", shopId)
       .maybeSingle();
 
-    if (credError) {
-      console.error("[CONFIG ERROR] ❌ Supabase Query Error (shop_credentials):", credError);
-      return false;
-    }
-    if (!cred) {
-      console.error(`[CONFIG ERROR] ❌ Record NOT FOUND in 'shop_credentials' for shop_id = '${shopId}'`);
-      return false;
-    }
+    if (credError || !cred || !cred.platform_app_id) return false;
 
-    console.log("[CONFIG] ✅ Found 'shop_credentials':", {
-      id: cred.id,
-      shop_id: cred.shop_id,
-      platform_app_id: cred.platform_app_id,
-      seller_shop_id: cred.seller_shop_id,
-      has_access_token: !!cred.access_token,
-      expires_at: cred.access_token_expires_at,
-    });
-
-    if (!cred.platform_app_id) {
-      console.error("[CONFIG ERROR] ❌ platform_app_id is NULL or empty in 'shop_credentials'.");
-      return false;
-    }
-
-    // 2. Đọc App Key/Secret của Shopee từ bảng platform_apps
-    console.log(`[CONFIG] 🔍 Querying table 'platform_apps' where id = '${cred.platform_app_id}'...`);
     const { data: appData, error: appError } = await supabase
       .from("platform_apps")
       .select("app_key, app_secret")
       .eq("id", cred.platform_app_id)
       .single();
 
-    if (appError) {
-      console.error("[CONFIG ERROR] ❌ Supabase Query Error (platform_apps):", appError);
-      return false;
-    }
-    if (!appData) {
-      console.error(`[CONFIG ERROR] ❌ Record NOT FOUND in 'platform_apps' for id = '${cred.platform_app_id}'`);
-      return false;
-    }
-
-    console.log("[CONFIG] ✅ Found 'platform_apps':", {
-      app_key: appData.app_key,
-      has_app_secret: !!appData.app_secret,
-    });
+    if (appError || !appData) return false;
 
     const partnerId = parseInt(String(appData.app_key || "0").trim(), 10) || 0;
     const partnerKey = String(appData.app_secret || "").trim();
     const sellerShopId = parseInt(String(cred.seller_shop_id || "0").trim(), 10) || 0;
     let accessToken = cred.access_token || "";
 
-    console.log(`[CONFIG Parsed] PartnerID=${partnerId}, SellerShopID=${sellerShopId}, PartnerKeyLength=${partnerKey.length}`);
-
-    if (!partnerId || !partnerKey || !sellerShopId) {
-      console.error("[CONFIG ERROR] ❌ Field validation failed: One of PartnerID, PartnerKey, or SellerShopID is invalid/0.");
-      return false;
-    }
+    if (!partnerId || !partnerKey || !sellerShopId) return false;
 
     const now = new Date();
     const expiresAt = cred.access_token_expires_at ? new Date(cred.access_token_expires_at) : new Date(0);
 
-    // 3. Tự động Refresh Token nếu Token hết hạn (hoặc còn dưới 10 phút)
     if (expiresAt.getTime() - now.getTime() < 10 * 60 * 1000) {
-      console.log("[CONFIG] 🔄 Access token sắp/đã hết hạn. Tiến hành Refresh Token...");
       try {
         const timestamp = Math.floor(Date.now() / 1000);
         const refreshPath = "/api/v2/auth/access_token/get";
         const baseString = `${partnerId}${refreshPath}${timestamp}`;
-        
         const sign = crypto.createHmac("sha256", partnerKey).update(baseString).digest("hex");
         const url = `${HOST}${refreshPath}?partner_id=${partnerId}&timestamp=${timestamp}&sign=${sign}`;
 
@@ -220,8 +162,6 @@ async function loadConfigFromSupabase(shopId: string): Promise<boolean> {
         });
 
         const refreshData = await res.json();
-        console.log("[CONFIG Refresh Response]:", refreshData);
-
         if (refreshData.access_token) {
           accessToken = refreshData.access_token;
           const expiresInSeconds = refreshData.expire_in || 14400;
@@ -236,28 +176,15 @@ async function loadConfigFromSupabase(shopId: string): Promise<boolean> {
               updated_at: new Date().toISOString(),
             })
             .eq("shop_id", shopId);
-
-          console.log("[CONFIG] ✅ Đã cập nhật Token mới vào Database thành công!");
-        } else {
-          console.error("[CONFIG ERROR] ❌ Refresh Token bị từ chối từ phía Shopee:", refreshData);
         }
       } catch (refreshErr) {
-        console.error("[CONFIG ERROR] ❌ Lỗi ngoại lệ khi Refresh Token:", refreshErr);
+        console.error("Lỗi Refresh Token:", refreshErr);
       }
     }
 
-    CONFIG = {
-      PARTNER_ID: partnerId,
-      PARTNER_KEY: partnerKey,
-      ACCESS_TOKEN: accessToken,
-      SHOP_ID: sellerShopId,
-    };
-
-    console.log("[CONFIG SUCCESS] ✅ Nạp cấu hình thành công!");
-    console.log("============================================================");
+    CONFIG = { PARTNER_ID: partnerId, PARTNER_KEY: partnerKey, ACCESS_TOKEN: accessToken, SHOP_ID: sellerShopId };
     return CONFIG.PARTNER_ID > 0 && !!CONFIG.PARTNER_KEY && !!CONFIG.ACCESS_TOKEN;
   } catch (e) {
-    console.error("[CONFIG EXCEPTION] ❌ Exception in loadConfigFromSupabase:", e);
     return false;
   }
 }
@@ -284,19 +211,10 @@ async function getOrderDetailsBatch(orderSnList: string[]): Promise<any[]> {
   }).toString();
 
   try {
-    console.log(`[Shopee API] 📤 get_order_detail:`, orderSnList);
     const response = await fetch(`${HOST}${GET_ORDER_DETAIL}?${queryParams}`, { method: "GET" });
     const result = await response.json();
-    
-    if (result.error) {
-      console.error(`[Shopee API Error] get_order_detail:`, result);
-    } else {
-      console.log(`[Shopee API Response] Lấy chi tiết thành công cho ${result.response?.order_list?.length || 0} đơn.`);
-    }
-
     return result.response?.order_list || [];
   } catch (err) {
-    console.error("[Shopee API Exception] get_order_detail:", err);
     return [];
   }
 }
@@ -314,7 +232,6 @@ async function getMassShippingParameter(packageNumbers: string[]): Promise<any> 
   }).toString();
 
   try {
-    console.log(`[Shopee API] 📤 get_mass_shipping_parameter cho packages:`, packageNumbers);
     const response = await fetch(`${HOST}${MASS_PARAM_PATH}?${queryParams}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -322,7 +239,6 @@ async function getMassShippingParameter(packageNumbers: string[]): Promise<any> 
     });
     return await response.json();
   } catch (err) {
-    console.error("[Shopee API Exception] get_mass_shipping_parameter:", err);
     return null;
   }
 }
@@ -351,33 +267,25 @@ async function massShipOrder(massParamData: any, packageNumbers: string[]): Prom
     sign: sign,
   }).toString();
 
-  const body = {
-    package_list: packageNumbers.map(p => ({ package_number: p })),
-    pickup: { address_id: addressId, pickup_time_id: pickupTimeId }
-  };
-
   try {
-    console.log(`[Shopee API] 📤 mass_ship_order với Body:`, body);
     const response = await fetch(`${HOST}${MASS_SHIP_PATH}?${queryParams}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        package_list: packageNumbers.map(p => ({ package_number: p })),
+        pickup: { address_id: addressId, pickup_time_id: pickupTimeId }
+      }),
     });
-    const result = await response.json();
-    console.log(`[Shopee API Response] mass_ship_order:`, result);
-    return result;
+    return await response.json();
   } catch (err) {
-    console.error("[Shopee API Exception] mass_ship_order:", err);
     return null;
   }
 }
 
 async function getMassTrackingNumbers(packageNumbers: string[], retry = 3): Promise<any[]> {
-  const pathUri = MASS_TRACKING_NUMBER;
-
   for (let attempt = 1; attempt <= retry; attempt++) {
     const timestamp = Math.floor(Date.now() / 1000);
-    const sign = generateShopeeSign(pathUri, timestamp);
+    const sign = generateShopeeSign(MASS_TRACKING_NUMBER, timestamp);
 
     const queryParams = new URLSearchParams({
       partner_id: CONFIG.PARTNER_ID.toString(),
@@ -387,30 +295,24 @@ async function getMassTrackingNumbers(packageNumbers: string[], retry = 3): Prom
       sign: sign,
     }).toString();
 
-    const body = {
-      package_list: packageNumbers.map(p => ({ package_number: p })),
-      response_optional_fields: "tracking_number,first_mile_tracking_number,sls_tracking_number,logistics_tracking_number",
-    };
-
     try {
-      console.log(`[Shopee API] 📤 get_mass_tracking_number (Lần ${attempt}) cho:`, packageNumbers);
-      const response = await fetch(`${HOST}${pathUri}?${queryParams}`, {
+      const response = await fetch(`${HOST}${MASS_TRACKING_NUMBER}?${queryParams}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          package_list: packageNumbers.map(p => ({ package_number: p })),
+          response_optional_fields: "tracking_number,first_mile_tracking_number,sls_tracking_number,logistics_tracking_number",
+        }),
       });
       const resData = await response.json();
       const successList = resData.response?.success_list || [];
       if (successList.length > 0) {
-        console.log(`Lấy mã vận đơn thành công:`, successList.length);
         return successList.map((s: any) => ({
           package_number: s.package_number,
           tracking_number: s.tracking_number || s.sls_tracking_number || s.logistics_tracking_number || s.first_mile_tracking_number
         }));
       }
-    } catch (err) {
-      console.error(`Lỗi get_mass_tracking_number lần ${attempt}:`, err);
-    }
+    } catch (err) {}
     await new Promise((res) => setTimeout(res, 200));
   }
   return [];
@@ -428,18 +330,17 @@ async function createShippingDocumentExpress(orderList: any[]): Promise<boolean>
     sign: sign,
   }).toString();
 
-  const bodyList = orderList.map(o => {
-    const item: any = { order_sn: o.order_sn, shipping_document_type: "NORMAL_AIR_WAYBILL" };
-    if (o.package_number) item.package_number = o.package_number;
-    return item;
-  });
-
   try {
-    console.log(`[Shopee API] 📤 create_shipping_document (Express)`);
     const response = await fetch(`${HOST}${CREATE_SHIPPING_DOCUMENT}?${queryParams}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ order_list: bodyList }),
+      body: JSON.stringify({
+        order_list: orderList.map(o => ({
+          order_sn: o.order_sn,
+          package_number: o.package_number || undefined,
+          shipping_document_type: "NORMAL_AIR_WAYBILL"
+        }))
+      }),
     });
     const data = await response.json();
     return !(data.response?.fail_list && data.response.fail_list.length > 0);
@@ -472,7 +373,6 @@ async function createShippingDocumentNormal(trackingList: any[]): Promise<boolea
   }).toString();
 
   try {
-    console.log(`[Shopee API] 📤 create_shipping_document (Normal)`);
     const response = await fetch(`${HOST}${CREATE_SHIPPING_DOCUMENT}?${queryParams}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -485,9 +385,8 @@ async function createShippingDocumentNormal(trackingList: any[]): Promise<boolea
   }
 }
 
-async function poolShippingDocumentResult(orderList: any[], timeout = 15): Promise<boolean> {
+async function poolShippingDocumentResult(orderList: any[], timeout = 25): Promise<boolean> {
   const start = Date.now();
-  console.log(`🔄 Bắt đầu Polling trạng thái PDF (timeout ${timeout}s)...`);
   while ((Date.now() - start) / 1000 < timeout) {
     const timestamp = Math.floor(Date.now() / 1000);
     const sign = generateShopeeSign(DOCUMENT_RESULT, timestamp);
@@ -509,20 +408,15 @@ async function poolShippingDocumentResult(orderList: any[], timeout = 15): Promi
       const data = await response.json();
       const resultList = data?.response?.result_list || [];
 
-      if (resultList.some((r: any) => r.fail_error)) {
-        console.error(`❌ Lỗi khi poll PDF result:`, resultList);
-        return false;
-      }
+      if (resultList.some((r: any) => r.fail_error)) return false;
 
       const statuses = resultList.map((r: any) => r.status);
       if (statuses.length > 0 && statuses.every((s: string) => s === "READY")) {
-        console.log(`✅ File PDF đã READY trên Shopee!`);
         return true;
       }
     } catch (e) {}
-    await new Promise((res) => setTimeout(res, 300));
+    await new Promise((res) => setTimeout(res, 1200)); 
   }
-  console.warn(`⚠️ Polling PDF result hết thời gian timeout (${timeout}s).`);
   return false;
 }
 
@@ -546,7 +440,6 @@ async function downloadShippingDocumentBytes(trackingList: any[], maxRetry = 3):
     }).toString();
 
     try {
-      console.log(`[Shopee API] 📤 download_shipping_document (Lần ${attempt})...`);
       const response = await fetch(`${HOST}${DOWNLOAD_DOCUMENT}?${queryParams}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -557,68 +450,31 @@ async function downloadShippingDocumentBytes(trackingList: any[], maxRetry = 3):
       });
 
       if (response.ok && response.headers.get("content-type")?.includes("application/pdf")) {
-        console.log(`📥 Tải PDF thành công từ Shopee!`);
         return await response.arrayBuffer();
       } else {
         const errText = await response.text();
-        console.error(`❌ Tải PDF thất bại (lần ${attempt}):`, errText);
-
         if (errText.includes("shipping_document_should_print_first")) {
-          console.log("🖨️ Shopee yêu cầu tạo lại Document, tiến hành kích hoạt lại...");
           const expressSimple = trackingList.filter(t => t.is_express);
           const normalTracking = trackingList.filter(t => !t.is_express);
 
           if (expressSimple.length > 0) await createShippingDocumentExpress(expressSimple);
           if (normalTracking.length > 0) await createShippingDocumentNormal(normalTracking);
 
-          await new Promise((res) => setTimeout(res, 300));
+          await new Promise((res) => setTimeout(res, 500));
         }
       }
-    } catch (err) {
-      console.error("[Shopee API Exception] download_shipping_document:", err);
-    }
+    } catch (err) {}
   }
-
   return null;
 }
 
-async function extractSingleLabel(srcDoc: PDFDocument, orderIndexInBatch: number): Promise<PDFDocument> {
-  const singleDoc = await PDFDocument.create();
-  const sourcePageIndex = Math.floor(orderIndexInBatch / 4);
-  const quadrantIndex = orderIndexInBatch % 4;
-
-  if (sourcePageIndex >= srcDoc.getPageCount()) return singleDoc;
-
-  const [copiedPage] = await singleDoc.copyPages(srcDoc, [sourcePageIndex]);
-  const { width, height } = copiedPage.getSize();
-  const singleW = width / 2;
-  const singleH = height / 2;
-
-  const quads = [
-    { x: 0, y: -singleH },         // Top-Left
-    { x: 0, y: 0 },                // Bottom-Left
-    { x: -singleW, y: -singleH },  // Top-Right
-    { x: -singleW, y: 0 },         // Bottom-Right
-  ];
-
-  const quad = quads[quadrantIndex];
-  const embedded = await singleDoc.embedPage(copiedPage);
-  
-  const newPage = singleDoc.addPage([singleW, singleH]);
-  newPage.drawPage(embedded, {
-    x: quad.x,
-    y: quad.y,
-    width: width,
-    height: height,
-  });
-
-  return singleDoc;
-}
-
-async function appendPickingSlipToDoc(targetDoc: PDFDocument, groupName: string, ordersData: any[], fontBytes: Buffer, productDbMap: Record<string, string>) {
-  targetDoc.registerFontkit(fontkit);
-  const fontVn = await targetDoc.embedFont(fontBytes);
-
+async function appendPickingSlipToDoc(
+  targetDoc: PDFDocument, 
+  fontVn: PDFFont, 
+  groupName: string, 
+  ordersData: any[], 
+  productDbMap: Record<string, string>
+) {
   let page = targetDoc.addPage([419.53, 595.27]);
   const pageWidth = 419.53;
 
@@ -795,24 +651,20 @@ async function appendPickingSlipToDoc(targetDoc: PDFDocument, groupName: string,
   }
 }
 
-// MAIN ROUTE HANDLER (POST METHOD)
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { action, shop_id, selected_groups_data, order_ids } = body;
 
-    console.log(`🚀 Request POST: Action='${action}', ShopID='${shop_id}'`);
-
     const isConfigLoaded = await loadConfigFromSupabase(shop_id);
     if (!isConfigLoaded) {
-      console.error("❌ Failed to load config from Supabase for shop_id:", shop_id);
       return NextResponse.json(
-        { success: false, message: "Không lấy được cấu hình API từ Supabase (xem Log Terminal)" },
+        { success: false, message: "Không lấy được cấu hình API từ Supabase" },
         { status: 400, headers: corsHeaders }
       );
     }
 
-    // ACTION 1: CONFIRM (XÁC NHẬN ĐƠN HÀNG)
+    // ACTION 1: CONFIRM
     if (action === "confirm") {
       const targetOrderIds: string[] = order_ids || [];
       const orderChunks = chunkArray(targetOrderIds, BATCH_SIZE);
@@ -826,7 +678,6 @@ export async function POST(req: NextRequest) {
         const fetchedSns = new Set(orderListDetail.map((o: any) => o.order_sn));
         chunkIds.forEach((id: string) => {
           if (!fetchedSns.has(id)) {
-            console.warn(`⚠️ Mã đơn ${id} không tìm thấy trên Shopee!`);
             failedDetails.push({ order_id: id, reason: "Không tìm thấy mã đơn" });
           }
         });
@@ -835,11 +686,7 @@ export async function POST(req: NextRequest) {
 
         orderListDetail.forEach(o => {
           if (o.order_status !== "READY_TO_SHIP") {
-            console.warn(`⚠️ Mã đơn ${o.order_sn} trạng thái không hợp lệ: ${o.order_status}`);
-            failedDetails.push({
-              order_id: o.order_sn,
-              reason: mapStatusToVn(o.order_status)
-            });
+            failedDetails.push({ order_id: o.order_sn, reason: mapStatusToVn(o.order_status) });
           }
         });
 
@@ -869,8 +716,6 @@ export async function POST(req: NextRequest) {
         }
       });
 
-      console.log(`✅ [CONFIRM] Thành công: ${totalSuccessCount}, Thất bại: ${failedDetails.length}`);
-
       return NextResponse.json(
         {
           success: true,
@@ -882,15 +727,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ACTION 2: PRINT (IN HÀNG LOẠT)
+    // ACTION 2: PRINT
     if (action === "print") {
-      console.log(`🖨️ [PRINT] Đang xử lý các nhóm:`, selected_groups_data?.map((g: any) => g.group_name));
-
       let fontBytes: Buffer;
       try {
         fontBytes = fs.readFileSync(path.join(process.cwd(), "public", "DejaVuSans.ttf"));
       } catch (e) {
-        console.error("❌ Lỗi thiếu tệp font public/DejaVuSans.ttf!");
         return NextResponse.json(
           { success: false, message: "Thiếu tệp public/DejaVuSans.ttf" },
           { status: 500, headers: corsHeaders }
@@ -904,8 +746,6 @@ export async function POST(req: NextRequest) {
         const gName = group.group_name;
         const oIds: string[] = group.order_ids;
 
-        console.log(`🔹 Đang xử lý Nhóm ${gName} (${oIds.length} đơn)...`);
-
         const chunks = chunkArray(oIds, BATCH_SIZE);
         const groupFailedDetails: any[] = [];
         const groupAllPrintableOrders: any[] = [];
@@ -918,7 +758,6 @@ export async function POST(req: NextRequest) {
           const fetchedSns = new Set(orderListDetail.map((o: any) => o.order_sn));
           chunkOrderIds.forEach((id: string) => {
             if (!fetchedSns.has(id)) {
-              console.warn(`⚠️ [PRINT] Đơn ${id} không tìm thấy trên Shopee!`);
               chunkFailedDetails.push({ order_id: id, reason: "Không tìm thấy mã đơn" });
             }
           });
@@ -995,12 +834,8 @@ export async function POST(req: NextRequest) {
           const expressSimple = trackingInfo.filter(t => t.is_express);
           const normalTracking = trackingInfo.filter(t => !t.is_express);
 
-          if (expressSimple.length > 0) {
-            await createShippingDocumentExpress(expressSimple);
-          }
-          if (normalTracking.length > 0) {
-            await createShippingDocumentNormal(normalTracking);
-          }
+          if (expressSimple.length > 0) await createShippingDocumentExpress(expressSimple);
+          if (normalTracking.length > 0) await createShippingDocumentNormal(normalTracking);
 
           const docOrderList = trackingInfo.map(t => {
             const item: any = { order_sn: t.order_sn, shipping_document_type: "NORMAL_AIR_WAYBILL" };
@@ -1040,7 +875,6 @@ export async function POST(req: NextRequest) {
         let groupSuccessCount = 0;
 
         if (groupLabelBatches.length > 0) {
-          console.log(`📑 Ghép PDF cho Nhóm ${gName}...`);
           const allSkusInOrders = new Set<string>();
           for (const order of groupAllPrintableOrders) {
             for (const it of order.item_list || []) {
@@ -1066,55 +900,56 @@ export async function POST(req: NextRequest) {
             });
           }
 
-          const allSingleLabelDocs: PDFDocument[] = [];
-
-          for (const batch of groupLabelBatches) {
-            const srcDoc = await PDFDocument.load(batch.rawBuf);
-            const extractPromises = [];
-            for (let orderIdx = 0; orderIdx < batch.orderCount; orderIdx++) {
-              extractPromises.push(extractSingleLabel(srcDoc, orderIdx));
-            }
-            const singleDocs = await Promise.all(extractPromises);
-            for (const doc of singleDocs) {
-              if (doc.getPageCount() > 0) {
-                allSingleLabelDocs.push(doc);
-              }
-            }
-          }
-
           const finalPdf = await PDFDocument.create();
           finalPdf.registerFontkit(fontkit);
           const fontVn = await finalPdf.embedFont(fontBytes);
 
-          const totalLabels = allSingleLabelDocs.length;
+          const embeddedPagesList: { embeddedPage: any; width: number; height: number }[] = [];
+
+          for (const batch of groupLabelBatches) {
+            const srcDoc = await PDFDocument.load(batch.rawBuf);
+            const totalBatchPages = srcDoc.getPageCount();
+            const copiedPages = await finalPdf.copyPages(srcDoc, Array.from({ length: totalBatchPages }, (_, i) => i));
+
+            for (let orderIdx = 0; orderIdx < batch.orderCount; orderIdx++) {
+              const sourcePageIndex = Math.floor(orderIdx / 4);
+              const quadrantIndex = orderIdx % 4;
+
+              if (sourcePageIndex < totalBatchPages) {
+                const copiedPage = copiedPages[sourcePageIndex];
+                const { width, height } = copiedPage.getSize();
+                const singleW = width / 2;
+                const singleH = height / 2;
+
+                const embeddedPage = await finalPdf.embedPage(copiedPage);
+                embeddedPagesList.push({ embeddedPage, width: singleW, height: singleH });
+              }
+            }
+          }
+
+          const totalLabels = embeddedPagesList.length;
           const halfCount = Math.ceil(totalLabels / 2);
 
           for (let i = 0; i < halfCount; i++) {
-            const leftDoc = allSingleLabelDocs[i];
-            const rightDoc = (i + halfCount < totalLabels) ? allSingleLabelDocs[i + halfCount] : null;
+            const leftItem = embeddedPagesList[i];
+            const rightItem = (i + halfCount < totalLabels) ? embeddedPagesList[i + halfCount] : null;
 
-            const [leftPage] = await finalPdf.copyPages(leftDoc, [0]);
-            const { width: sW, height: sH } = leftPage.getSize();
+            const combinedPage = finalPdf.addPage([leftItem.width * 2, leftItem.height]);
 
-            const combinedPage = finalPdf.addPage([sW * 2, sH]);
-
-            const embeddedLeft = await finalPdf.embedPage(leftPage);
-            await combinedPage.drawPage(embeddedLeft, { x: 0, y: 0, width: sW, height: sH });
+            await combinedPage.drawPage(leftItem.embeddedPage, { x: 0, y: 0, width: leftItem.width * 2, height: leftItem.height * 2 });
             await combinedPage.drawText(`${gName}-${i + 1}`, {
               x: 100,
-              y: sH - 20,
+              y: leftItem.height - 20,
               size: 11,
               font: fontVn,
               color: rgb(1, 0, 0),
             });
 
-            if (rightDoc) {
-              const [rightPage] = await finalPdf.copyPages(rightDoc, [0]);
-              const embeddedRight = await finalPdf.embedPage(rightPage);
-              await combinedPage.drawPage(embeddedRight, { x: sW, y: 0, width: sW, height: sH });
+            if (rightItem) {
+              await combinedPage.drawPage(rightItem.embeddedPage, { x: leftItem.width, y: 0, width: rightItem.width * 2, height: rightItem.height * 2 });
               await combinedPage.drawText(`${gName}-${i + 1 + halfCount}`, {
-                x: sW + 100,
-                y: sH - 20,
+                x: leftItem.width + 100,
+                y: leftItem.height - 20,
                 size: 11,
                 font: fontVn,
                 color: rgb(1, 0, 0),
@@ -1122,7 +957,7 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          await appendPickingSlipToDoc(finalPdf, gName, groupAllPrintableOrders, fontBytes, productDbMap);
+          await appendPickingSlipToDoc(finalPdf, fontVn, gName, groupAllPrintableOrders, productDbMap);
 
           const finalPdfBuffer = await finalPdf.save();
           pdfBase64 = Buffer.from(finalPdfBuffer).toString("base64");
@@ -1137,8 +972,6 @@ export async function POST(req: NextRequest) {
           failed_details: groupFailedDetails
         });
       }
-
-      console.log(`✅ [PRINT HOÀN TẤT] Tổng đơn tạo PDF thành công: ${globalSuccessCount}`);
 
       return NextResponse.json(
         {
@@ -1156,7 +989,6 @@ export async function POST(req: NextRequest) {
     );
 
   } catch (error: any) {
-    console.error("❌ Lỗi Route Handler Server:", error);
     return NextResponse.json(
       { success: false, message: error.message || "Lỗi server" },
       { status: 500, headers: corsHeaders }
