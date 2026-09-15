@@ -24,6 +24,7 @@ jobs:
 
       - name: Build Next.js app
         env:
+          ELECTRON_BUILD: 'true' # 🚀 QUAN TRỌNG: Bắt buộc có dòng này để Next xuất thư mục out
           NEXT_PUBLIC_SUPABASE_URL_SHOPEE: 'https://placeholder.supabase.co'
           NEXT_PUBLIC_SUPABASE_ANON_KEY_SHOPEE: 'placeholder-key'
           NEXT_PUBLIC_SUPABASE_URL_TIKTOK: 'https://placeholder.supabase.co'

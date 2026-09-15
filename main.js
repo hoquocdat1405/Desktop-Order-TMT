@@ -2,11 +2,13 @@ const { app, BrowserWindow, screen, ipcMain, dialog } = require("electron");
 const path = require("path");
 const fs = require("fs");
 
+let win; // Khai báo biến global để quản lý window trên Mac tốt hơn
+
 async function createWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
 
-  const win = new BrowserWindow({
+  win = new BrowserWindow({
     width: Math.round(screenWidth * 0.8),
     height: Math.round(screenHeight * 0.85),
     minWidth: 1024,
@@ -22,8 +24,11 @@ async function createWindow() {
   });
 
   if (app.isPackaged) {
-    // Load trực tiếp file index.html từ thư mục out
-    win.loadFile(path.join(__dirname, "out", "index.html"));
+    // 🚀 Load file tĩnh index.html từ thư mục out và bẫy lỗi nếu không thấy file
+    const indexPath = path.join(__dirname, "out", "index.html");
+    win.loadFile(indexPath).catch((err) => {
+      console.error("Không tìm thấy file tĩnh HTML:", err);
+    });
   } else {
     // Khi Dev thì load server Next.js
     win.loadURL("http://localhost:3099");
@@ -73,10 +78,19 @@ ipcMain.handle("save-pdf-file", async (event, { folderPath, fileName, base64Data
 });
 
 // =========================================================================
-// 🚀 LIFECYCLE APP
+// 🚀 LIFECYCLE APP (Chuẩn hóa cho cả Windows & macOS)
 // =========================================================================
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  createWindow();
+
+  // 🚀 Xử lý chuẩn cho macOS: Click icon ở Dock mà chưa có window thì mở lại window mới
+  app.on("activate", () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+    }
+  });
+});
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
