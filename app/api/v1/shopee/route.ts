@@ -959,8 +959,7 @@ export async function POST(req: NextRequest) {
 
           await appendPickingSlipToDoc(finalPdf, fontVn, gName, groupAllPrintableOrders, productDbMap);
 
-          // 🚀 NÉN STREAM PDF TỐI ĐA (Giảm 40-60% dung lượng file)
-          const finalPdfBuffer = await finalPdf.save({ useObjectStreams: true });
+          const finalPdfBuffer = await finalPdf.save();
           pdfBase64 = Buffer.from(finalPdfBuffer).toString("base64");
           groupSuccessCount = totalLabels;
           globalSuccessCount += groupSuccessCount;

@@ -5,7 +5,8 @@ import { Search, Loader2, CheckCircle2, XCircle, Clock, Store, RefreshCw, Histor
 import { createClient } from "@supabase/supabase-js";
 import { useUserShops } from "@/hooks/useUserShops";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "";
+// const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "";
+const BASE_URL = "";
 
 // Khai báo fallback Supabase Keys trực tiếp để tránh lỗi bị mất .env khi Build Electron .exe
 const SUPABASE_URL_SHOPEE = process.env.NEXT_PUBLIC_SUPABASE_URL_SHOPEE || "https://placeholder.supabase.co";
@@ -318,9 +319,9 @@ export default function OrdersProcessing() {
   );
 
   const currentApiEndpoint = useMemo(() => {
-    const path = currentShop?.platform === "tiktok" ? "/api/v1/tiktok" : "/api/v1/shopee";
-    return `${BASE_URL}${path}`;
-  }, [currentShop]);
+  // Trỏ thẳng về relative path để app chạy mượt trên Localhost nội bộ
+  return currentShop?.platform === "tiktok" ? "/api/v1/tiktok" : "/api/v1/shopee";
+}, [currentShop]);
 
   const updateGroupsData = (updatedData: any[]) => {
     if (!selectedShopId) return;

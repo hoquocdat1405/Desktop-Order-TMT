@@ -17,7 +17,22 @@ export async function OPTIONS() {
 }
 
 const CUT_OFF_HOUR = 16;
-const CONCURRENCY_LIMIT = 10;
+const API_CONCURRENCY_LIMIT = 10;
+const DOWNLOAD_CONCURRENCY_LIMIT = 20; // 🚀 Tăng tốc độ tải file PDF từ CDN
+
+// 🚀 CACHE FONT TẠI BỘ NHỚ SERVER - Không tốn I/O đọc đĩa nhiều lần
+let cachedFontBytes: Buffer | null = null;
+function getCachedFont(): Buffer | null {
+  if (!cachedFontBytes) {
+    try {
+      const fontPath = path.join(process.cwd(), "public", "DejaVuSans.ttf");
+      cachedFontBytes = fs.readFileSync(fontPath);
+    } catch (e) {
+      console.error("Lỗi đọc file font DejaVuSans.ttf:", e);
+    }
+  }
+  return cachedFontBytes;
+}
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL_TIKTOK || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey =
@@ -206,7 +221,7 @@ async function getOrdersDetailBatch(orderIds: string[]): Promise<Record<string, 
     chunks.push(orderIds.slice(i, i + 50));
   }
 
-  await runWithConcurrencyLimit(chunks, CONCURRENCY_LIMIT, async (chunk) => {
+  await runWithConcurrencyLimit(chunks, API_CONCURRENCY_LIMIT, async (chunk) => {
     const qs: Record<string, string> = {
       ids: chunk.join(","),
       timestamp: Math.floor(Date.now() / 1000).toString(),
@@ -779,13 +794,11 @@ export async function POST(req: NextRequest) {
       }, { headers: corsHeaders });
     }
 
-    // ACTION 2: PRINT (SONG SONG HÓA TOÀN BỘ)
+    // ACTION 2: PRINT (ĐÃ TỐI ƯU TỐC ĐỘ TỐI ĐA)
     if (action === "print") {
-      let fontBytes: Buffer;
-      try {
-        const fontPath = path.join(process.cwd(), "public", "DejaVuSans.ttf");
-        fontBytes = fs.readFileSync(fontPath);
-      } catch (e) {
+      // 🚀 LẤY FONT TỪ CACHE HỆ THỐNG
+      const fontBytes = getCachedFont();
+      if (!fontBytes) {
         return NextResponse.json(
           { success: false, message: "Kiểm tra lại file DejaVuSans.ttf trong thư mục public!" },
           { status: 500, headers: corsHeaders }
@@ -817,27 +830,36 @@ export async function POST(req: NextRequest) {
           else if (!info.package_id) groupFailedDetails.push({ order_id: id, reason: `Thiếu kiện hàng (${mapStatusToVn(info.status)})` });
         });
 
-        const labelMap: Record<string, ArrayBuffer> = {};
-        
-        // Tải nhãn PDF song song với giới hạn Concurrency
-        await runWithConcurrencyLimit(oIds, CONCURRENCY_LIMIT, async (oid: string) => {
+        // 🚀 LƯU TỰU TRỰC TIẾP INSTANCE PDFDocument ĐỂ CHỈ PARSE 1 LẦN DUY NHẤT
+        const docMap: Record<string, PDFDocument> = {};
+
+        // 🚀 TẢI NHÃN SONG SONG TỚI CDN VỚI CONCURRENCY = 20
+        await runWithConcurrencyLimit(oIds, DOWNLOAD_CONCURRENCY_LIMIT, async (oid: string) => {
           const info = orderDetailMap[oid];
           if (info && info.package_id) {
             const bytes = await getShippingLabelBytes(info.package_id);
-            if (bytes) labelMap[oid] = bytes;
-            else groupFailedDetails.push({ order_id: oid, reason: mapStatusToVn(info.status) });
+            if (bytes) {
+              try {
+                // Parse 1 lần duy nhất ngay khi tải về
+                const parsedDoc = await PDFDocument.load(bytes);
+                docMap[oid] = parsedDoc;
+              } catch (e) {
+                groupFailedDetails.push({ order_id: oid, reason: "File nhãn PDF lỗi" });
+              }
+            } else {
+              groupFailedDetails.push({ order_id: oid, reason: mapStatusToVn(info.status) });
+            }
           }
         });
 
         const orderSequenceOk: string[] = [];
         const doubleOrders: string[] = [];
 
+        // Phân loại đơn nhiều trang mà KHÔNG CAN PARSE LẠI PDF
         for (const oid of oIds) {
-          if (labelMap[oid]) {
-            try {
-              const tempDoc = await PDFDocument.load(labelMap[oid]);
-              if (tempDoc.getPageCount() >= 2) doubleOrders.push(oid);
-            } catch (e) {}
+          const srcDoc = docMap[oid];
+          if (srcDoc) {
+            if (srcDoc.getPageCount() >= 2) doubleOrders.push(oid);
             orderSequenceOk.push(oid);
           }
         }
@@ -879,19 +901,14 @@ export async function POST(req: NextRequest) {
 
           // Ghép 2 nhãn A6 sang 1 trang A5 trực tiếp trên finalPdf
           const orderPages: { oid: string; pindex: number }[] = [];
-          const embeddedDocsMap: Record<string, PDFDocument> = {};
 
           for (const oid of finalSequence) {
-            const bytes = labelMap[oid];
-            if (!bytes) continue;
-            try {
-              const srcDoc = await PDFDocument.load(bytes);
-              embeddedDocsMap[oid] = srcDoc;
-              const count = srcDoc.getPageCount();
-              for (let i = 0; i < count; i++) {
-                orderPages.push({ oid, pindex: i });
-              }
-            } catch (e) {}
+            const srcDoc = docMap[oid];
+            if (!srcDoc) continue;
+            const count = srcDoc.getPageCount();
+            for (let i = 0; i < count; i++) {
+              orderPages.push({ oid, pindex: i });
+            }
           }
 
           const half = Math.ceil(orderPages.length / 2);
@@ -910,7 +927,7 @@ export async function POST(req: NextRequest) {
 
             if (i < leftPages.length) {
               const { oid, pindex } = leftPages[i];
-              const srcDoc = embeddedDocsMap[oid];
+              const srcDoc = docMap[oid];
               const [copiedPage] = await finalPdf.copyPages(srcDoc, [pindex]);
               const embeddedPage = await finalPdf.embedPage(copiedPage);
 
@@ -925,7 +942,7 @@ export async function POST(req: NextRequest) {
 
             if (i < rightPages.length) {
               const { oid, pindex } = rightPages[i];
-              const srcDoc = embeddedDocsMap[oid];
+              const srcDoc = docMap[oid];
               const [copiedPage] = await finalPdf.copyPages(srcDoc, [pindex]);
               const embeddedPage = await finalPdf.embedPage(copiedPage);
 
