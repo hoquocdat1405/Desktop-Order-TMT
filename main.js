@@ -57,8 +57,8 @@ ipcMain.handle("select-folder", async () => {
   }
 });
 
-// 2. Kênh Ghi file PDF
-ipcMain.handle("save-pdf-file", async (event, { folderPath, fileName, base64Data }) => {
+// 2. Kênh Ghi file PDF (Đã tối ưu: Nhận Binary Buffer trực tiếp từ ArrayBuffer/Uint8Array)
+ipcMain.handle("save-pdf-file", async (event, { folderPath, fileName, arrayBufferData }) => {
   try {
     const cleanFolderPath = path.normalize(folderPath);
 
@@ -67,7 +67,9 @@ ipcMain.handle("save-pdf-file", async (event, { folderPath, fileName, base64Data
     }
 
     const fullPath = path.join(cleanFolderPath, fileName);
-    const buffer = Buffer.from(base64Data, "base64");
+
+    // 🚀 Chuyển trực tiếp ArrayBuffer/Uint8Array sang Node.js Buffer
+    const buffer = Buffer.from(arrayBufferData);
     fs.writeFileSync(fullPath, buffer);
 
     return { success: true };

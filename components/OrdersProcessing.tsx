@@ -170,31 +170,31 @@ export default function OrdersProcessing() {
   }, [selectedShopId]);
 
   const handleSelectDownloadFolder = async () => {
-  if (!selectedShopId) return showAlert("Cảnh báo", "Vui lòng chọn gian hàng trước!", "warning");
-  if (isSelectingFolder) return;
+    if (!selectedShopId) return showAlert("Cảnh báo", "Vui lòng chọn gian hàng trước!", "warning");
+    if (isSelectingFolder) return;
 
-  setIsSelectingFolder(true);
+    setIsSelectingFolder(true);
 
-  try {
-    // 🚀 Kiểm tra và gọi IPC an toàn từ Electron
-    if (typeof window !== "undefined" && (window as any).require) {
-      const { ipcRenderer } = (window as any).require("electron");
-      const folderPath = await ipcRenderer.invoke("select-folder");
+    try {
+      // 🚀 Kiểm tra và gọi IPC an toàn từ Electron
+      if (typeof window !== "undefined" && (window as any).require) {
+        const { ipcRenderer } = (window as any).require("electron");
+        const folderPath = await ipcRenderer.invoke("select-folder");
 
-      if (folderPath) {
-        setDownloadDirPaths((prev) => ({ ...prev, [selectedShopId]: folderPath }));
-        localStorage.setItem(`ecom_download_dir_path_${selectedShopId}`, folderPath);
+        if (folderPath) {
+          setDownloadDirPaths((prev) => ({ ...prev, [selectedShopId]: folderPath }));
+          localStorage.setItem(`ecom_download_dir_path_${selectedShopId}`, folderPath);
+        }
+      } else {
+        showAlert("Thông báo", "Chức năng chọn thư mục chỉ chạy trên app Desktop Electron!", "info");
       }
-    } else {
-      showAlert("Thông báo", "Chức năng chọn thư mục chỉ chạy trên app Desktop Electron!", "info");
+    } catch (err: any) {
+      console.error("Lỗi chọn thư mục:", err);
+      showAlert("Lỗi", "Không thể gọi hộp thoại chọn thư mục: " + err.message, "error");
+    } finally {
+      setIsSelectingFolder(false);
     }
-  } catch (err: any) {
-    console.error("Lỗi chọn thư mục:", err);
-    showAlert("Lỗi", "Không thể gọi hộp thoại chọn thư mục: " + err.message, "error");
-  } finally {
-    setIsSelectingFolder(false);
-  }
-};
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -796,6 +796,7 @@ export default function OrdersProcessing() {
     );
   };
 
+  // 🚀 ĐÃ TỐI ƯU: GIẢI MÃ BASE64 SANG ARRAYBUFFER NGAY TẠI CLIENT VÀ GỬI TỚI ELECTRON
   const executePrintBatch = async () => {
     setLoading(true);
     setCurrentAction("print");
@@ -967,10 +968,18 @@ export default function OrdersProcessing() {
           for (const fileItem of validFiles) {
             const individualFileName = `${shopNamePrefix} - ${dateStr} - ${fileItem.group_name} - ${fileItem.success_count} đơn.pdf`;
 
+            // 🚀 Chuyển Base64 sang ArrayBuffer (Binary) ngay tại trình duyệt
+            const binaryString = atob(fileItem.pdf_base64);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let idx = 0; idx < binaryString.length; idx++) {
+              bytes[idx] = binaryString.charCodeAt(idx);
+            }
+
+            // Truyền trực tiếp ArrayBuffer nhị phân sang Electron main process
             await ipcRenderer.invoke("save-pdf-file", {
               folderPath: targetSubFolderPath,
               fileName: individualFileName,
-              base64Data: fileItem.pdf_base64,
+              arrayBufferData: bytes.buffer,
             });
           }
         }
